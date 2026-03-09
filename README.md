@@ -42,10 +42,10 @@
 
 ```bash
 # 1. Скачайте скрипт
-wget -O setup.sh https://raw.githubusercontent.com/ВАШ_НИК/ubuntu-server-setup/main/setup.sh
+wget -O setup-server.sh https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24-/refs/heads/main/setup-server.sh
 
 # 2. Сделайте его исполняемым
-chmod +x setup.sh
+chmod +x setup-server.sh
 
 # 3. Запустите от имени root
-sudo ./setup.sh
+sudo ./setup-server.sh
