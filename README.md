@@ -42,7 +42,7 @@
 
 ```bash
 # 1. Скачайте скрипт
-wget -O setup-server.sh https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24-/refs/heads/main/setup-server.sh
+wget -O setup-server.sh https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/refs/heads/main/setup-server.sh
 
 # 2. Сделайте его исполняемым
 chmod +x setup-server.sh
