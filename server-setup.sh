@@ -2,10 +2,10 @@
 # ======================================================
 # Setup & Test Server Ubuntu 24.04
 # https://github.com/Balbuto/Setup-and-Test-Server-Ubuntu-24
-# Версия: 3.1
+# Версия: 3.2
 #
-# Основано на v2 от Balbuto
-# v3.1: исправлены ошибки IFS, sysctl-конфликты, LOG_FILE, аргументы тестов
+# v3.2: исправлен apt (APT_OPTS массив, IFS-safe), стоп при ошибках apt,
+#       нормальный вывод пакетов, docker version safe, apt-lock wait
 # ======================================================
 
 set -Eeuo pipefail
@@ -51,49 +51,75 @@ backup_file() {
 }
 
 # ======================================================
-# APT тихие обёртки
+# APT
 # ======================================================
 export DEBIAN_FRONTEND=noninteractive
-APT_QUIET="-qq -o Dpkg::Use-Pty=0"
+APT_OPTS=(-qq -o Dpkg::Use-Pty=0)
+
+wait_apt_lock() {
+    local i=0
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null >/dev/null; do
+        if (( i == 0 )); then echo -ne "${YELLOW}⏳ Жду освобождения apt-lock...${NC}"; fi
+        sleep 3; ((i++))
+        if (( i > 40 )); then echo -e "\r${CROSS_MARK} apt lock не освободился за 120с${NC}"; return 1; fi
+        echo -ne "."
+    done
+    (( i > 0 )) && echo -e "\r${CHECK_MARK} apt lock свободен          ${NC}"
+    return 0
+}
+
+apt_fail_tail() {
+    echo -e "${RED}--- последние 40 строк $LOG_FILE ---${NC}" >&2
+    tail -n 40 "$(log_file)" >&2 || true
+    echo -e "${RED}--- конец лога ---${NC}" >&2
+}
 
 apt_update() {
+    wait_apt_lock || return 1
     echo -ne "${BLUE}📦 Обновление списков пакетов...${NC}"
-    if apt-get update $APT_QUIET >>"$(log_file)" 2>&1; then
+    if apt-get update "${APT_OPTS[@]}" >>"$(log_file)" 2>&1; then
         echo -e "\r${GREEN}📦 Списки пакетов обновлены          ${NC}"
     else
-        echo -e "\r${CROSS_MARK} ${RED}apt update failed, см. $LOG_FILE${NC}"
+        echo -e "\r${CROSS_MARK} ${RED}apt update failed${NC}"
+        apt_fail_tail
         return 1
     fi
 }
 
 apt_install() {
+    wait_apt_lock || return 1
     local pkgs=("$@")
     local pkgs_str
-    printf -v pkgs_str '%s ' "${pkgs[@]}"
-    echo -ne "${BLUE}📦 Устанавливаю: ${pkgs_str}...${NC}"
-    if apt-get install -y $APT_QUIET "${pkgs[@]}" >>"$(log_file)" 2>&1; then
+    local IFS=' '
+    pkgs_str="${pkgs[*]}"
+    echo -ne "${BLUE}📦 Устанавливаю: ${pkgs_str} ...${NC}"
+    if apt-get install -y "${APT_OPTS[@]}" "${pkgs[@]}" >>"$(log_file)" 2>&1; then
         echo -e "\r${CHECK_MARK} Установлено: ${pkgs_str}          ${NC}"
         log "apt install OK: ${pkgs_str}"
     else
-        echo -e "\r${CROSS_MARK} ${RED}Ошибка установки ${pkgs_str}, см. $LOG_FILE${NC}"
+        echo -e "\r${CROSS_MARK} ${RED}Ошибка установки ${pkgs_str}${NC}"
+        apt_fail_tail
         return 1
     fi
 }
 
 apt_upgrade_full() {
+    wait_apt_lock || return 1
     echo -ne "${BLUE}📦 upgrade / dist-upgrade ...${NC}"
-    if apt-get upgrade -y $APT_QUIET >>"$(log_file)" 2>&1 \
-    && apt-get dist-upgrade -y $APT_QUIET >>"$(log_file)" 2>&1; then
+    if apt-get upgrade -y "${APT_OPTS[@]}" >>"$(log_file)" 2>&1 \
+    && apt-get dist-upgrade -y "${APT_OPTS[@]}" >>"$(log_file)" 2>&1; then
         echo -e "\r${CHECK_MARK} Система обновлена              ${NC}"
     else
-        echo -e "\r${CROSS_MARK} ${RED}upgrade failed, см. $LOG_FILE${NC}"
+        echo -e "\r${CROSS_MARK} ${RED}upgrade failed${NC}"
+        apt_fail_tail
         return 1
     fi
 }
 
 apt_autoclean() {
-    apt-get autoremove -y $APT_QUIET >>"$(log_file)" 2>&1 || true
-    apt-get autoclean -y $APT_QUIET >>"$(log_file)" 2>&1 || true
+    wait_apt_lock || true
+    apt-get autoremove -y "${APT_OPTS[@]}" >>"$(log_file)" 2>&1 || true
+    apt-get autoclean -y "${APT_OPTS[@]}" >>"$(log_file)" 2>&1 || true
 }
 
 need_cmd() {
@@ -109,6 +135,7 @@ need_cmd() {
     fi
 }
 
+# --- Проверки ---
 check_distro() {
     if [[ -f /etc/os-release ]]; then . /etc/os-release; fi
     if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" ]]; then
@@ -127,7 +154,7 @@ check_root() {
 show_header() {
     clear
     echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}🚀 НАСТРОЙКА И ДИАГНОСТИКА СЕРВЕРА  v3.1${NC}"
+    echo -e "${WHITE}🚀 НАСТРОЙКА И ДИАГНОСТИКА СЕРВЕРА  v3.2${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
     . /etc/os-release 2>/dev/null || true
     echo -e "${BLUE} Система: ${PRETTY_NAME:-$(uname -a)}${NC}"
@@ -169,6 +196,7 @@ secure_download() {
     chmod +x "$dest"; return 0
 }
 
+# run_verified_script "Name" "url" "sha" -- arg1 arg2 ...
 run_verified_script() {
     local name="$1" url="$2" expected_sha="${3:-}"
     shift 3
@@ -199,21 +227,25 @@ clean_old_sysctl() {
 
 install_docker_apt() {
     echo -e "${BLUE}🐳 Установка Docker через официальный apt-репозиторий${NC}"
-    apt_update; apt_install ca-certificates curl gnupg
+    apt_update || return 1
+    apt_install ca-certificates curl gnupg || return 1
     install -m 0755 -d /etc/apt/keyrings
     if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
         chmod a+r /etc/apt/keyrings/docker.gpg
     fi
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    apt_update
-    apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt_update || return 1
+    apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return 1
     systemctl enable --now docker >>"$(log_file)" 2>&1 || true
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
         usermod -aG docker "$SUDO_USER"
         log "Пользователь $SUDO_USER добавлен в группу docker"
     fi
-    log "Docker установлен: $(docker --version)"
+    local docker_ver
+    docker_ver=$(docker --version 2>/dev/null || echo "not found")
+    log "Docker установлен: $docker_ver"
 }
 
 enable_bbr() {
@@ -340,13 +372,15 @@ EOF
     log "HIGHLOAD sysctl применён"
 }
 
+# IPv6 менеджер
 ipv6_menu() {
     show_header; echo -e "${WHITE}Управление IPv6${NC}\n"
     if sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q 1; then echo -e "Статус: ${RED}Отключён${NC}"; else echo -e "Статус: ${GREEN}Включён${NC}"; fi
     echo ""; echo "1) Отключить IPv6 (с бэкапом + restore-скрипт)"; echo "2) Включить IPv6 обратно"; echo "0) Назад"
     read -p "Выбор: " c
     case $c in
-        1) backup_file /etc/sysctl.d/70-disable-ipv6.conf
+        1)
+            backup_file /etc/sysctl.d/70-disable-ipv6.conf
             cat > /etc/sysctl.d/70-disable-ipv6.conf <<'EOF'
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
@@ -365,7 +399,8 @@ RESTORE
             chmod +x /root/restore-ipv6.sh
             echo -e "${CHECK_MARK} IPv6 отключён. Откат: ${YELLOW}/root/restore-ipv6.sh${NC}"
             log "IPv6 disabled"; pause_prompt ;;
-        2) rm -f /etc/sysctl.d/70-disable-ipv6.conf
+        2)
+            rm -f /etc/sysctl.d/70-disable-ipv6.conf
             sysctl -w net.ipv6.conf.all.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
             sysctl -w net.ipv6.conf.default.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
             sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
@@ -375,6 +410,7 @@ RESTORE
 }
 
 base_setup() {
+    set -e
     show_header; echo -e "${WHITE}БАЗОВАЯ НАСТРОЙКА - выберите шаги${NC}\n"
     read -p "1. Обновить систему? [Y/n] " a_update; a_update=${a_update:-Y}
     read -p "2. Установить базовый софт (mc, net-tools, ncdu, iftop, curl, wget, git)? [Y/n] " a_base; a_base=${a_base:-Y}
@@ -384,23 +420,57 @@ base_setup() {
     read -p "Выбор [s]: " a_hard; a_hard=${a_hard:-s}
     read -p "6. Установить irqbalance? [Y/n] " a_irq; a_irq=${a_irq:-Y}
     echo ""
-    if [[ $a_update =~ ^[Yy] ]]; then apt_update; apt_upgrade_full; apt_autoclean; fi
-    if [[ $a_base =~ ^[Yy] ]]; then apt_install mc net-tools ncdu iftop curl wget git ca-certificates gnupg lsb-release; fi
-    if [[ $a_docker =~ ^[Yy] ]]; then if ! command -v docker &>/dev/null; then install_docker_apt; else echo "Docker уже установлен"; fi; fi
+
+    local failed=0
+    if [[ $a_update =~ ^[Yy] ]]; then
+        apt_update || failed=1
+        if ((failed==0)); then apt_upgrade_full || failed=1; fi
+        apt_autoclean
+        if ((failed)); then echo -e "${CROSS_MARK} ${RED}Обновление системы не удалось, прерываю настройку${NC}"; pause_prompt; return 1; fi
+    fi
+    if [[ $a_base =~ ^[Yy] ]]; then
+        apt_install mc net-tools ncdu iftop curl wget git ca-certificates gnupg lsb-release || { echo -e "${CROSS_MARK} Установка базового софта не удалась"; pause_prompt; return 1; }
+    fi
+    if [[ $a_docker =~ ^[Yy] ]]; then
+        if ! command -v docker &>/dev/null; then
+            install_docker_apt || { echo -e "${CROSS_MARK} Установка Docker не удалась"; pause_prompt; return 1; }
+        else
+            echo "Docker уже установлен"
+        fi
+    fi
     if [[ $a_bbr =~ ^[Yy] ]]; then enable_bbr; fi
-    case $a_hard in s|S) apply_sysctl_safe ;; h|H) apply_sysctl_highload ;; *) echo "Hardening пропущен" ;; esac
-    if [[ $a_irq =~ ^[Yy] ]]; then apt_install irqbalance; systemctl enable --now irqbalance >>"$(log_file)" 2>&1 || true; fi
+
+    case $a_hard in
+        s|S) apply_sysctl_safe ;;
+        h|H) apply_sysctl_highload ;;
+        *) echo "Hardening пропущен" ;;
+    esac
+
+    if [[ $a_irq =~ ^[Yy] ]]; then
+        apt_install irqbalance || echo -e "${WARNING} irqbalance не установился, пропускаю"
+        systemctl enable --now irqbalance >>"$(log_file)" 2>&1 || true
+    fi
+
     echo -e "\n${CHECK_MARK} Готово! Бэкапы в: $BACKUP_DIR"
-    echo -e "Полный лог apt: ${BLUE}$LOG_FILE${NC}"
-    if [[ -f /var/run/reboot-required ]]; then echo -e "${WARNING} Требуется перезагрузка"; read -p "Перезагрузить сейчас? (y/N): " -n 1 -r; echo; [[ $REPLY =~ ^[Yy]$ ]] && reboot; fi
+    echo -e "Полный лог: ${BLUE}$LOG_FILE${NC}"
+    if [[ -f /var/run/reboot-required ]]; then
+        echo -e "${WARNING} Требуется перезагрузка"
+        read -p "Перезагрузить сейчас? (y/N): " -n 1 -r; echo
+        [[ $REPLY =~ ^[Yy]$ ]] && reboot
+    fi
     pause_prompt
 }
 
+# ======================================================
+# 2. UFW MANAGER
+# ======================================================
 manage_ufw() {
     show_header; check_root || { pause_prompt; return; }
     local UFW_DIR="$HOME/network-managers/ufw-manager"
     mkdir -p "$(dirname "$UFW_DIR")"
-    if [[ ! -d "$UFW_DIR/.git" ]]; then echo "Клонирую Balbuto/ufw-manager..."; git clone https://github.com/Balbuto/ufw-manager.git "$UFW_DIR"
+    if [[ ! -d "$UFW_DIR/.git" ]]; then
+        echo "Клонирую Balbuto/ufw-manager..."
+        git clone https://github.com/Balbuto/ufw-manager.git "$UFW_DIR"
     else (cd "$UFW_DIR" && git fetch --all -q); fi
     cd "$UFW_DIR"; echo -e "\nПоследние коммиты:"; git log --oneline -5; echo ""
     read -p "Проверить diff перед запуском? [Y/n] " d; d=${d:-Y}
@@ -409,6 +479,9 @@ manage_ufw() {
     bash ./ufw-manager.sh; cd ~
 }
 
+# ======================================================
+# 3. MULTITEST
+# ======================================================
 run_multitest() {
     show_header; echo -e "🧪 ДИАГНОСТИКА - все скрипты верифицируются\n"
     need_cmd curl curl || true; need_cmd wget wget || true; need_cmd traceroute traceroute || true
@@ -465,8 +538,13 @@ run_multitest() {
     done
 }
 
+# ======================================================
+# МЕНЮ
+# ======================================================
 main() {
-    init_logging; mkdir -p "$BACKUP_DIR" 2>/dev/null || true; check_distro
+    init_logging
+    mkdir -p "$BACKUP_DIR" 2>/dev/null || true
+    check_distro
     trap 'echo -e "\n${YELLOW}Прервано${NC}"; exit 130' INT
     while true; do
         show_header
@@ -483,7 +561,16 @@ main() {
         echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
         read -p "Выбор: " choice || choice=0
         case $choice in
-            1) check_root && base_setup || { echo "Нужен root"; pause_prompt; } ;;
+            1)
+                if check_root; then
+                    if ! base_setup; then
+                        echo -e "${CROSS_MARK} ${RED}Базовая настройка завершилась с ошибкой. См. $LOG_FILE${NC}"
+                        pause_prompt
+                    fi
+                else
+                    echo "Нужен root"; pause_prompt
+                fi
+                ;;
             2) check_root && ipv6_menu || { echo "Нужен root"; pause_prompt; } ;;
             3) manage_ufw ;;
             4) run_multitest ;;
