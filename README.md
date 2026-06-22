@@ -78,9 +78,9 @@
 ## 📦 Установка
 
 ```bash
-wget https://raw.githubusercontent.com/YOUR_USER/Setup-and-Test-Server-Ubuntu-24/main/server-setup.sh
-chmod +x server-setup.sh
-sudo ./server-setup.sh
+wget https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/main/server-setup
+chmod +x server-setup
+sudo ./server-setup
 ```
 
 Требования: **Ubuntu 24.04 LTS**, root.
@@ -89,7 +89,7 @@ sudo ./server-setup.sh
 
 ## 🛡️ Sysctl профили
 
-Подробно: [docs/SYSCTL.md](docs/SYSCTL.md)
+Подробно: [SYSCTL.md](SYSCTL.md)
 
 **SAFE (по умолчанию):**
 ```
@@ -115,7 +115,7 @@ rmem/wmem_max = 128 MB
 
 Каждый тест-скрипт: HTTPS-only, TLS 1.2+, SHA256, ручное подтверждение если хэш не зашит.
 
-Хэши в `run_multitest()` пустые по умолчанию - заполните после первого прогона, см. [docs/TESTS.md](docs/TESTS.md)
+Хэши в `run_multitest()` пустые по умолчанию - заполните после первого прогона, см. [TESTS.md](TESTS.md)
 
 ---
 
@@ -128,10 +128,9 @@ CHANGELOG.md
 LICENSE
 CONTRIBUTING.md
 SECURITY.md
-docs/
-  USAGE.md
-  SYSCTL.md
-  TESTS.md
+USAGE.md
+SYSCTL.md
+TESTS.md
 ```
 
 Логи: `/var/log/server-setup.log` → `/tmp/server-setup.log` → `~/server-setup.log`
@@ -142,9 +141,9 @@ docs/
 
 ## 📖 Документация
 
-- [Использование](docs/USAGE.md)
-- [Sysctl профили](docs/SYSCTL.md)
-- [Тесты](docs/TESTS.md)
+- [Использование](USAGE.md)
+- [Sysctl профили](SYSCTL.md)
+- [Тесты](TESTS.md)
 
 ---
 
