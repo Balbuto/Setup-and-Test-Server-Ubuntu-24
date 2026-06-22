@@ -1,179 +1,160 @@
 # 🚀 Setup & Test Server Ubuntu 24.04
 
-**Универсальный скрипт для первоначальной настройки и диагностики сервера Ubuntu 24.04 LTS.**  
-Выполняет полную оптимизацию сети, установку необходимого ПО, жёсткие настройки безопасности (hardening) и предоставляет встроенный набор тестов для проверки производительности и цензуры.
+**Универсальный скрипт для первоначальной настройки и диагностики сервера Ubuntu 24.04 LTS.**
+
+Версия 3.0
 
 [![Bash](https://img.shields.io/badge/bash-5.1+-green)](https://www.gnu.org/software/bash/)
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-orange)](https://ubuntu.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+Выполняет полную настройку сети, установку необходимого ПО, hardening и предоставляет встроенный набор тестов для проверки производительности.
+
+Основано на проекте Balbuto v2.
+
+---
+
+## Что нового в v3.0
+
+| v2 | v3.0 |
+|---|---|
+| IPv6 отключается всегда | IPv6 **не трогается**. Отдельное меню с бэкапом и `/root/restore-ipv6.sh` |
+| `nofile 1M+, conntrack 2M` сразу | **SAFE профиль по умолчанию**: nofile 65k, conntrack 65k. HIGHLOAD опционально |
+| `curl \| bash` без проверки | Все внешние скрипты **HTTPS + SHA256 + подтверждение** |
+| Docker через `get.docker.com \| sh` | Docker через **официальный apt-репозиторий с GPG** |
+| Перезапись `/etc` без бэкапа | **Автобэкап** в `/root/server-setup-backups/` |
+| Логи с ANSI-мусором | Чистые логи |
+| Весь вывод apt в консоль | **Тихая установка**: прогресс в 1 строку, полный лог в файл |
+| UFW-manager: blind wget | `git clone` + `git diff` перед запуском |
+| Базовый софт: mc, net-tools | + **ncdu, iftop** |
+
 ---
 
 ## ✨ Возможности
 
-### 1. Базовая настройка сервера (один пункт меню)
-- Обновление системы (`update`, `upgrade`, `dist-upgrade`, автозачистка)
-- Установка базового ПО: `mc`, `net-tools`
-- Установка **Docker** и **Docker Compose** (официальный скрипт, автозапуск)
-- **Включение BBR** (алгоритм контроля перегрузок TCP)
-- **Отключение IPv6** (полное через sysctl)
-- **Hardening** (тюнинг ядра, лимиты файлов, anti‑flood, irqbalance)
-
-### 2. Управление файерволом UFW
-- Интерактивный менеджер на базе [Balbuto/ufw-manager](https://github.com/Balbuto/ufw-manager)
-- Защита SSH, транзакционные изменения, интеграция Fail2ban
-- Фиктивное значение `SSH_CLIENT` для корректной работы без SSH-сессии
-
-### 3. Встроенный мультитест (диагностика)
-- **14 тестов** без скачивания внешних скриптов:
-  - IP Region, Censorcheck (геоблок, DPI), iPerf3 до российских серверов
-  - YABS, bench.sh, IP Check Place, IPQuality
-  - sysbench CPU, sysbench Memory, Network Bench
-  - SSL/TLS, Traceroute, Ping
-- Возможность запуска **всех тестов сразу** (пункт 99)
-
-### 4. Безопасность и удобство
-- Проверка дистрибутива (предупреждение, если не Ubuntu 24.04)
-- Полное логирование в `/var/log/server-setup.log` (с fallback)
-- Обработка Ctrl+C
-- Корректная работа как с `sudo`, так и без (для тестов)
-
----
-
-## 📋 Требования
-
-- **ОС:** Ubuntu 24.04 LTS (может работать на более ранних версиях, но не гарантировано)
-- **Права root** – для базовой настройки и управления UFW
-- **Интернет** – для обновлений и установки Docker
-- **Bash 5.1+** (установлен по умолчанию)
-
----
-
-## ⚙️ Установка и запуск
-
-### Способ 1 – клонирование репозитория
-```bash
-git clone https://github.com/Balbuto/Setup-and-Test-Server-Ubuntu-24.git
-cd Setup-and-Test-Server-Ubuntu-24
-chmod +x server-setup
-sudo ./server-setup
-```
-### Способ 2 – прямой скачивание скрипта
-```bash
-wget https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/main/server-setup.sh
-chmod +x server-setup
-sudo ./server-setup
-```
-
-### ℹ️ Для запуска только мультитеста права root не обязательны:
-```bash
-./server-setup → выбрать пункт 3.
-```
-
-## 🕹️ Использование
-После запуска отображается главное меню:
-
-```text
-═══════════════════════════════════════════════════════════════
-🚀        ИНТЕРАКТИВНАЯ НАСТРОЙКА И ДИАГНОСТИКА СЕРВЕРА        🚀
-═══════════════════════════════════════════════════════════════
-  Система:      Ubuntu 24.04 LTS
-  Ядро:         6.8.0-31-generic
-  Архитектура:  x86_64
-═══════════════════════════════════════════════════════════════
-
-ГЛАВНОЕ МЕНЮ:
-
-⚙️ 1. Базовая настройка сервера (ПО, BBR, IPv6, Hardening)
-🔒 2. Управление файерволом (UFW)
-🧪 3. Запустить диагностику (Multitest)
-
-0. Выйти
-
-═══════════════════════════════════════════════════════════════
-Выберите действие (0-3):
-```
-
 ### 1. Базовая настройка сервера
-Выполняется 7 шагов автоматически.
+Интерактивно, каждый шаг отключаемый:
 
-По окончании, если требуется перезагрузка, скрипт спросит: перезагрузить сейчас или отложить.
+1. **Обновление системы** - `update / upgrade / dist-upgrade / autoremove / autoclean`
+2. **Базовый софт** - `mc, net-tools, ncdu, iftop, curl, wget, git`
+3. **Docker + Docker Compose** - официальный apt-репозиторий, GPG
+4. **BBR** - TCP congestion control
+5. **Hardening** - на выбор SAFE / HIGHLOAD / none
+6. **irqbalance**
 
-Лог всех действий пишется в /var/log/server-setup.log.
+### 2. Управление IPv6
+- Посмотреть статус
+- Отключить с автобэкапом + `/root/restore-ipv6.sh`
+- Включить обратно
 
-### 2. Управление UFW
-Запускает менеджер ufw-manager.sh (загружается из репозитория Balbuto).
+### 3. Управление файерволом UFW
+Обертка над [Balbuto/ufw-manager](https://github.com/Balbuto/ufw-manager):
+- `git clone`, показ `git log`, `git diff` перед запуском
 
-Позволяет добавлять/удалять правила, включать/отключать UFW, настраивать Fail2ban.
+### 4. Диагностика Multitest
+14 тестов, все через верифицированную загрузку:
 
-### 3. Диагностика (Multitest)
-Открывается подменю с 14 тестами.
+| # | Тест | Источник |
+|---|---|---|
+| 1 | IP Region | `ipregion.vrnt.xyz` |
+| 2 | Censorcheck — геоблок | `vernette/censorcheck` |
+| 3 | Censorcheck — DPI | `vernette/censorcheck` |
+| 4 | iPerf3 — RU | `itdoginfo/russian-iperf3-servers` |
+| 5 | YABS | `yabs.sh` |
+| 6 | IP Check Place | `IP.Check.Place` |
+| 7 | bench.sh | `bench.sh` |
+| 8 | IPQuality | `Check.Place` |
+| 9 | sysbench CPU |
+| 10 | sysbench Memory |
+| 11 | Network Bench |
+| 12 | SSL/TLS check |
+| 13 | Traceroute yandex.ru |
+| 14 | Ping yandex.ru |
 
-Выберите номер теста или введите 99 для прогона всех.
+Пункт **99 - Запустить ВСЕ**.
 
-Каждый тест устанавливает недостающие пакеты через системный пакетный менеджер.
+---
 
-## 📂 Структура репозитория
-```text
-Setup-and-Test-Server-Ubuntu-24/
-├── server-setup         # Главный скрипт
-├── README.md            # Эта документация
-├── LICENSE              # Лицензия MIT
-├── CHANGELOG.md         # История изменений
-└── .gitignore           # Игнорируемые файлы (логи, временные файлы)
+## 📦 Установка
+
+```bash
+wget https://raw.githubusercontent.com/YOUR_USER/Setup-and-Test-Server-Ubuntu-24/main/server-setup.sh
+chmod +x server-setup.sh
+sudo ./server-setup.sh
 ```
 
-## 🔧 Детали реализации
-Логирование
-Файл LOG_FILE инициализируется в функции init_logging().
-
-Приоритет: /var/log/server-setup.log → /tmp/server-setup.log → $HOME/server-setup.log.
-
-Все сообщения дублируются на экран и в файл (если возможна запись).
-
-Интеграция внешних скриптов
-ufw-manager – скачивается при первом запуске пункта 2 в ~/network-managers/ufw-manager/.
-
-Переменная SSH_CLIENT подставляется фиктивная, чтобы избежать ошибки unbound variable.
-
-## 🚀 Hardening
-Настройки sysctl и limits.d основаны на рецептах для высоконагруженных серверов (Xray, антифлуд).
-
-BBR включается только один раз, дублирование исключено.
+Требования: **Ubuntu 24.04 LTS**, root.
 
 ---
 
-## ❓ Часто задаваемые вопросы
-Q: Нужно ли перезагружаться после базовой настройки?
+## 🛡️ Sysctl профили
 
-A: Рекомендуется, особенно если обновлялось ядро или применялись параметры sysctl. Скрипт сам предложит перезагрузку.
+Подробно: [docs/SYSCTL.md](docs/SYSCTL.md)
 
-Q: Можно ли запустить только мультитест без прав root?
+**SAFE (по умолчанию):**
+```
+nofile = 65535
+conntrack_max = 65536
+somaxconn = 4096
+rmem/wmem_max = 16 MB
+```
 
-A: Да. Тесты, не требующие установки пакетов, отработают; для установки недостающих утилит потребуются права, но скрипт предупредит.
+**HIGHLOAD (XRAY/VPN):**
+```
+nofile = 1048576
+conntrack_max = 2097152
+somaxconn = 1048576
+rmem/wmem_max = 128 MB
+```
 
-Q: Не сломает ли настройка IPv6 мои существующие сервисы?
-
-A: Если вы используете IPv4-адреса для подключений (Xray, SSH, веб-серверы) – отключение IPv6 безопасно и даже повышает безопасность. Если же какой-то сервис привязан к IPv6 – отключите пункт [5/7] в скрипте.
-
-Q: Совместим ли скрипт с Debian / CentOS?
-
-A: Основная логика рассчитана на Ubuntu 24.04. На других дистрибутивах могут быть различия в командах и расположении файлов. Вы увидите предупреждение и сможете продолжить на свой риск.
-
-Q: Где посмотреть лог, если что-то пошло не так?
-
-A: cat /var/log/server-setup.log. Если файл не создался – ищите в /tmp/server-setup.log или ~/server-setup.log.
+Оба с BBR, FastOpen, syncookies, anti-spoof.
 
 ---
 
-## 🤝 Вклад в проект
-Приветствуются pull request'ы и сообщения об ошибках. Пожалуйста, перед отправкой изменений:
+## 🔒 Верификация внешних скриптов
 
-Проверьте совместимость с Ubuntu 24.04.
+Каждый тест-скрипт: HTTPS-only, TLS 1.2+, SHA256, ручное подтверждение если хэш не зашит.
 
-Соблюдайте стиль кода (функции, цвета, логирование).
+Хэши в `run_multitest()` пустые по умолчанию - заполните после первого прогона, см. [docs/TESTS.md](docs/TESTS.md)
 
-Обновите CHANGELOG.md.
+---
+
+## 📁 Структура
+
+```
+server-setup.sh          # основной скрипт, ~560 строк
+README.md
+CHANGELOG.md
+LICENSE
+CONTRIBUTING.md
+SECURITY.md
+docs/
+  USAGE.md
+  SYSCTL.md
+  TESTS.md
+```
+
+Логи: `/var/log/server-setup.log` → `/tmp/server-setup.log` → `~/server-setup.log`
+
+Бэкапы: `/root/server-setup-backups/YYYYMMDD-HHMMSS/`
+
+---
+
+## 📖 Документация
+
+- [Использование](docs/USAGE.md)
+- [Sysctl профили](docs/SYSCTL.md)
+- [Тесты](docs/TESTS.md)
+
+---
 
 ## 📜 Лицензия
-Проект распространяется под лицензией MIT. Подробнее в файле LICENSE.
+
+MIT
+
+---
+
+## 🙏 Благодарности
+
+- [Balbuto](https://github.com/Balbuto) - автор v1/v2
+- Авторы yabs.sh, bench.sh, censorcheck, ipregion, IP.Check.Place и др.
