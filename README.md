@@ -55,19 +55,19 @@
 ```bash
 git clone https://github.com/Balbuto/Setup-and-Test-Server-Ubuntu-24.git
 cd Setup-and-Test-Server-Ubuntu-24
-chmod +x server-setup.sh
-sudo ./server-setup.sh
+chmod +x server-setup
+sudo ./server-setup
 ```
 ### Способ 2 – прямой скачивание скрипта
 ```bash
 wget https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/main/server-setup.sh
-chmod +x server-setup.sh
-sudo ./server-setup.sh
+chmod +x server-setup
+sudo ./server-setup
 ```
 
 ### ℹ️ Для запуска только мультитеста права root не обязательны:
 ```bash
-./server-setup.sh → выбрать пункт 3.
+./server-setup → выбрать пункт 3.
 ```
 
 ## 🕹️ Использование
@@ -116,7 +116,7 @@ sudo ./server-setup.sh
 ## 📂 Структура репозитория
 ```text
 Setup-and-Test-Server-Ubuntu-24/
-├── server-setup.sh      # Главный скрипт
+├── server-setup         # Главный скрипт
 ├── README.md            # Эта документация
 ├── LICENSE              # Лицензия MIT
 ├── CHANGELOG.md         # История изменений
