@@ -155,5 +155,4 @@ MIT
 
 ## 🙏 Благодарности
 
-- [Balbuto](https://github.com/Balbuto) - автор v1/v2
 - Авторы yabs.sh, bench.sh, censorcheck, ipregion, IP.Check.Place и др.
