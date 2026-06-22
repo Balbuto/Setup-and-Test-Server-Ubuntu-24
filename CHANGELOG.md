@@ -14,7 +14,7 @@
 - UFW-manager через `git clone` + `git diff` перед запуском
 - Пакеты `ncdu`, `iftop` в базовую установку
 - Отдельные пункты меню для применения SAFE/HIGHLOAD sysctl
-- Полная документация: README, docs/USAGE.md, docs/SYSCTL.md, docs/TESTS.md
+- Полная документация: README, USAGE.md, SYSCTL.md, TESTS.md
 - CONTRIBUTING.md, SECURITY.md
 
 ### Changed
