@@ -2,23 +2,13 @@
 # ======================================================
 # Setup & Test Server Ubuntu 24.04
 # https://github.com/Balbuto/Setup-and-Test-Server-Ubuntu-24
-# Версия: 3.0
+# Версия: 3.1
 #
 # Основано на v2 от Balbuto
-# v3.0 изменения:
-#  - IPv6 не отключается по умолчанию, отдельное меню с откатом
-#  - Sysctl: профиль SAFE по умолчанию, HIGHLOAD опционально
-#  - Верификация всех внешних скриптов: HTTPS + SHA256
-#  - Docker через официальный apt-репозиторий с GPG
-#  - Автобэкап всех /etc файлов
-#  - Тихий apt: вывод в лог, на экране прогресс
-#  - set -Eeuo pipefail, чистые логи
-#  - UFW-manager через git clone + diff
-#  - Базовые пакеты: +ncdu, +iftop
+# v3.1: исправлены ошибки IFS, sysctl-конфликты, LOG_FILE, аргументы тестов
 # ======================================================
 
 set -Eeuo pipefail
-IFS=$'\n\t'
 
 # --- Цвета ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -33,11 +23,10 @@ strip_ansi() { sed -r 's/\x1B\[[0-9;]*[mK]//g'; }
 log() {
     local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     echo -e "$msg" | strip_ansi
-    if [[ -n "$LOG_FILE" && -w "$(dirname "$LOG_FILE" 2>/dev/null || echo /tmp)" ]]; then
+    if [[ -n "${LOG_FILE:-}" && -w "$(dirname "$LOG_FILE" 2>/dev/null || echo /tmp)" ]]; then
         echo -e "$msg" | strip_ansi >> "$LOG_FILE" 2>/dev/null || true
     fi
 }
-log_color() { echo -e "$1"; log "$1"; }
 
 init_logging() {
     for path in "/var/log/server-setup.log" "/tmp/server-setup.log" "$HOME/server-setup.log"; do
@@ -47,8 +36,11 @@ init_logging() {
             return 0
         fi
     done
-    echo -e "${WARNING} Логирование в файл отключено" >&2
+    LOG_FILE="/dev/null"
+    echo -e "${WARNING} Логирование в файл отключено, использую /dev/null" >&2
 }
+log_file() { echo "${LOG_FILE:-/dev/null}"; }
+
 backup_file() {
     local f="$1"
     if [[ -f "$f" ]]; then
@@ -66,7 +58,7 @@ APT_QUIET="-qq -o Dpkg::Use-Pty=0"
 
 apt_update() {
     echo -ne "${BLUE}📦 Обновление списков пакетов...${NC}"
-    if apt-get update $APT_QUIET >>"$LOG_FILE" 2>&1; then
+    if apt-get update $APT_QUIET >>"$(log_file)" 2>&1; then
         echo -e "\r${GREEN}📦 Списки пакетов обновлены          ${NC}"
     else
         echo -e "\r${CROSS_MARK} ${RED}apt update failed, см. $LOG_FILE${NC}"
@@ -76,20 +68,22 @@ apt_update() {
 
 apt_install() {
     local pkgs=("$@")
-    echo -ne "${BLUE}📦 Устанавливаю: ${pkgs[*]} ...${NC}"
-    if apt-get install -y $APT_QUIET "${pkgs[@]}" >>"$LOG_FILE" 2>&1; then
-        echo -e "\r${CHECK_MARK} Установлено: ${pkgs[*]}          ${NC}"
-        log "apt install OK: ${pkgs[*]}"
+    local pkgs_str
+    printf -v pkgs_str '%s ' "${pkgs[@]}"
+    echo -ne "${BLUE}📦 Устанавливаю: ${pkgs_str}...${NC}"
+    if apt-get install -y $APT_QUIET "${pkgs[@]}" >>"$(log_file)" 2>&1; then
+        echo -e "\r${CHECK_MARK} Установлено: ${pkgs_str}          ${NC}"
+        log "apt install OK: ${pkgs_str}"
     else
-        echo -e "\r${CROSS_MARK} ${RED}Ошибка установки ${pkgs[*]}, см. $LOG_FILE${NC}"
+        echo -e "\r${CROSS_MARK} ${RED}Ошибка установки ${pkgs_str}, см. $LOG_FILE${NC}"
         return 1
     fi
 }
 
 apt_upgrade_full() {
     echo -ne "${BLUE}📦 upgrade / dist-upgrade ...${NC}"
-    if apt-get upgrade -y $APT_QUIET >>"$LOG_FILE" 2>&1 \
-    && apt-get dist-upgrade -y $APT_QUIET >>"$LOG_FILE" 2>&1; then
+    if apt-get upgrade -y $APT_QUIET >>"$(log_file)" 2>&1 \
+    && apt-get dist-upgrade -y $APT_QUIET >>"$(log_file)" 2>&1; then
         echo -e "\r${CHECK_MARK} Система обновлена              ${NC}"
     else
         echo -e "\r${CROSS_MARK} ${RED}upgrade failed, см. $LOG_FILE${NC}"
@@ -98,16 +92,20 @@ apt_upgrade_full() {
 }
 
 apt_autoclean() {
-    apt-get autoremove -y $APT_QUIET >>"$LOG_FILE" 2>&1 || true
-    apt-get autoclean -y $APT_QUIET >>"$LOG_FILE" 2>&1 || true
+    apt-get autoremove -y $APT_QUIET >>"$(log_file)" 2>&1 || true
+    apt-get autoclean -y $APT_QUIET >>"$(log_file)" 2>&1 || true
 }
 
 # Установить пакет только если команда отсутствует
 need_cmd() {
     local cmd=$1; shift
     local pkgs=("$@")
-    [[ ${#pkgs[@]} -eq 0 ]] && pkgs=("$cmd")
+    if [[ ${#pkgs[@]} -eq 0 ]]; then pkgs=("$cmd"); fi
     if ! command -v "$cmd" &>/dev/null; then
+        if [[ $EUID -ne 0 ]]; then
+            echo -e "${WARNING} Нужен root для установки $cmd, пропустите"
+            return 1
+        fi
         apt_install "${pkgs[@]}"
     fi
 }
@@ -131,13 +129,13 @@ check_root() {
 show_header() {
     clear
     echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}🚀 НАСТРОЙКА И ДИАГНОСТИКА СЕРВЕРА  v3.0${NC}"
+    echo -e "${WHITE}🚀 НАСТРОЙКА И ДИАГНОСТИКА СЕРВЕРА  v3.1${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
     . /etc/os-release 2>/dev/null || true
     echo -e "${BLUE} Система: ${PRETTY_NAME:-$(uname -a)}${NC}"
     echo -e "${BLUE} Ядро: $(uname -r)${NC}\n"
 }
-pause_prompt() { read -p "Нажмите Enter для продолжения..." _; }
+pause_prompt() { read -p "Нажмите Enter для продолжения..." _ || true; }
 
 # ======================================================
 # БЕЗОПАСНАЯ ЗАГРУЗКА
@@ -178,13 +176,19 @@ secure_download() {
     return 0
 }
 
+# run_verified_script "Name" "url" "sha" -- arg1 arg2 ...
 run_verified_script() {
-    local name="$1" url="$2" expected_sha="${3:-}" args="${4:-}"
+    local name="$1" url="$2" expected_sha="${3:-}"
+    shift 3
+    # поддержка опционального разделителя --
+    if [[ "${1:-}" == "--" ]]; then shift; fi
+    local args=("$@")
+
     local tmp="/tmp/verified-$(echo "$name" | tr ' /' '_')-$$.sh"
     echo -e "\n${CYAN}━━━━━━━━ $name ━━━━━━━━${NC}"
     if secure_download "$url" "$tmp" "$expected_sha"; then
-        log "Running verified script: $name $url"
-        bash "$tmp" $args
+        log "Running verified script: $name $url ${args[*]:-}"
+        bash "$tmp" "${args[@]}"
         local rc=$?
         rm -f "$tmp"
         return $rc
@@ -197,6 +201,19 @@ run_verified_script() {
 # ======================================================
 # 1. БАЗОВАЯ НАСТРОЙКА
 # ======================================================
+SYSCTL_CONF="/etc/sysctl.d/99-server.conf"
+LIMITS_CONF="/etc/security/limits.d/99-server.conf"
+
+clean_old_sysctl() {
+    # Удаляем старые конфликтующие файлы от v3.0 / v2
+    rm -f /etc/sysctl.d/99-server-safe.conf \
+          /etc/sysctl.d/99-xray-highload.conf \
+          /etc/sysctl.d/99-server-highload.conf 2>/dev/null || true
+    rm -f /etc/security/limits.d/99-server-safe.conf \
+          /etc/security/limits.d/99-xray.conf \
+          /etc/security/limits.d/99-server-highload.conf 2>/dev/null || true
+}
+
 install_docker_apt() {
     echo -e "${BLUE}🐳 Установка Docker через официальный apt-репозиторий${NC}"
     apt_update
@@ -210,7 +227,7 @@ install_docker_apt() {
       > /etc/apt/sources.list.d/docker.list
     apt_update
     apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    systemctl enable --now docker >>"$LOG_FILE" 2>&1 || true
+    systemctl enable --now docker >>"$(log_file)" 2>&1 || true
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
         usermod -aG docker "$SUDO_USER"
         log "Пользователь $SUDO_USER добавлен в группу docker"
@@ -219,19 +236,21 @@ install_docker_apt() {
 }
 
 enable_bbr() {
-    backup_file /etc/sysctl.d/99-server.conf
-    cat > /etc/sysctl.d/99-server.conf <<'EOF'
+    backup_file "$SYSCTL_CONF"
+    clean_old_sysctl
+    cat > "$SYSCTL_CONF" <<'EOF'
 # BBR TCP congestion control
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 EOF
-    sysctl -p /etc/sysctl.d/99-server.conf >>"$LOG_FILE" 2>&1
+    sysctl -p "$SYSCTL_CONF" >>"$(log_file)" 2>&1 || true
     log "BBR включён"
 }
 
 apply_sysctl_safe() {
-    backup_file /etc/sysctl.d/99-server.conf
-    cat > /etc/sysctl.d/99-server.conf <<'EOF'
+    backup_file "$SYSCTL_CONF"
+    clean_old_sysctl
+    cat > "$SYSCTL_CONF" <<'EOF'
 # Server hardening - Ubuntu 24.04 SAFE
 # Консервативный профиль для VPS 1-4GB
 # BBR
@@ -267,14 +286,14 @@ net.ipv4.icmp_echo_ignore_broadcasts = 1
 # conntrack - умеренно
 net.netfilter.nf_conntrack_max = 65536
 EOF
-    backup_file /etc/security/limits.d/99-server.conf
-    cat > /etc/security/limits.d/99-server.conf <<'EOF'
+    backup_file "$LIMITS_CONF"
+    cat > "$LIMITS_CONF" <<'EOF'
 * soft nofile 65535
 * hard nofile 65535
 root soft nofile 65535
 root hard nofile 65535
 EOF
-    sysctl --system >>"$LOG_FILE" 2>&1 || true
+    sysctl --system >>"$(log_file)" 2>&1 || true
     log "SAFE sysctl применён"
 }
 
@@ -283,8 +302,9 @@ apply_sysctl_highload() {
     read -p "Точно применить HIGHLOAD? (y/N): " -n 1 -r; echo
     [[ $REPLY =~ ^[Yy]$ ]] || return 0
     
-    backup_file /etc/sysctl.d/99-server-highload.conf
-    cat > /etc/sysctl.d/99-server-highload.conf <<'EOF'
+    backup_file "$SYSCTL_CONF"
+    clean_old_sysctl
+    cat > "$SYSCTL_CONF" <<'EOF'
 # Server HIGHLOAD - XRAY / VPN
 fs.file-max = 2097152
 fs.inotify.max_user_instances = 8192
@@ -342,14 +362,14 @@ net.ipv4.neigh.default.gc_thresh1 = 4096
 net.ipv4.neigh.default.gc_thresh2 = 8192
 net.ipv4.neigh.default.gc_thresh3 = 16384
 EOF
-    backup_file /etc/security/limits.d/99-server-highload.conf
-    cat > /etc/security/limits.d/99-server-highload.conf <<'EOF'
+    backup_file "$LIMITS_CONF"
+    cat > "$LIMITS_CONF" <<'EOF'
 * soft nofile 1048576
 * hard nofile 1048576
 root soft nofile 1048576
 root hard nofile 1048576
 EOF
-    sysctl --system >>"$LOG_FILE" 2>&1 || true
+    sysctl --system >>"$(log_file)" 2>&1 || true
     log "HIGHLOAD sysctl применён"
 }
 
@@ -376,7 +396,7 @@ net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 EOF
-            sysctl --system >>"$LOG_FILE" 2>&1 || true
+            sysctl --system >>"$(log_file)" 2>&1 || true
             cat > /root/restore-ipv6.sh <<'RESTORE'
 #!/bin/bash
 rm -f /etc/sysctl.d/70-disable-ipv6.conf
@@ -393,10 +413,10 @@ RESTORE
             ;;
         2)
             rm -f /etc/sysctl.d/70-disable-ipv6.conf
-            sysctl -w net.ipv6.conf.all.disable_ipv6=0 >>"$LOG_FILE" 2>&1 || true
-            sysctl -w net.ipv6.conf.default.disable_ipv6=0 >>"$LOG_FILE" 2>&1 || true
-            sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >>"$LOG_FILE" 2>&1 || true
-            sysctl --system >>"$LOG_FILE" 2>&1 || true
+            sysctl -w net.ipv6.conf.all.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
+            sysctl -w net.ipv6.conf.default.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
+            sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >>"$(log_file)" 2>&1 || true
+            sysctl --system >>"$(log_file)" 2>&1 || true
             echo -e "${CHECK_MARK} IPv6 включён"
             pause_prompt
             ;;
@@ -430,13 +450,13 @@ base_setup() {
 
     case $a_hard in
         s|S) apply_sysctl_safe ;;
-        h|H) apply_sysctl_safe; apply_sysctl_highload ;;
+        h|H) apply_sysctl_highload ;;
         *) echo "Hardening пропущен" ;;
     esac
 
     if [[ $a_irq =~ ^[Yy] ]]; then
         apt_install irqbalance
-        systemctl enable --now irqbalance >>"$LOG_FILE" 2>&1 || true
+        systemctl enable --now irqbalance >>"$(log_file)" 2>&1 || true
     fi
 
     echo -e "\n${CHECK_MARK} Готово! Бэкапы в: $BACKUP_DIR"
@@ -471,7 +491,7 @@ manage_ufw() {
     if [[ $d =~ ^[Yy] ]]; then
         git diff HEAD || true
         read -p "Запустить ufw-manager.sh? (y/N): " -n 1 -r; echo
-        [[ $REPLY =~ ^[Yy]$ ]] || return
+        [[ $REPLY =~ ^[Yy]$ ]] || { cd ~; return; }
     fi
     export SSH_CLIENT="${SSH_CLIENT:-0.0.0.0 22 0}"
     bash ./ufw-manager.sh
@@ -486,18 +506,13 @@ run_multitest() {
     echo -e "🧪 ДИАГНОСТИКА - все скрипты верифицируются\n"
 
     # Пакеты для тестов - тихо
-    need_cmd curl curl
-    need_cmd wget wget
-    need_cmd traceroute traceroute
+    need_cmd curl curl || true
+    need_cmd wget wget || true
+    need_cmd traceroute traceroute || true
 
-    # Хэши можно заполнить после первого прогона, для безопасности.
-    local H_IPREG=""
-    local H_CENSOR=""
-    local H_IPERF=""
-    local H_YABS=""
-    local H_IPCHECK=""
-    local H_BENCH=""
-    local H_IPQUALITY=""
+    # Хэши можно заполнить после первого прогона
+    local H_IPREG="" H_CENSOR="" H_IPERF="" H_YABS=""
+    local H_IPCHECK="" H_BENCH="" H_IPQUALITY=""
 
     while true; do
     show_header
@@ -523,29 +538,29 @@ run_multitest() {
 
     case $choice in
       1) run_verified_script "IP Region" "https://ipregion.vrnt.xyz" "$H_IPREG" || true; pause_prompt ;;
-      2) run_verified_script "Censorcheck" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" "--mode geoblock" || true; pause_prompt ;;
-      3) run_verified_script "Censorcheck DPI" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" "--mode dpi" || true; pause_prompt ;;
-      4) need_cmd iperf3 iperf3; run_verified_script "iPerf3 RU" "https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh" "$H_IPERF" || true; pause_prompt ;;
-      5) run_verified_script "YABS" "https://yabs.sh" "$H_YABS" "-4" || true; pause_prompt ;;
-      6) run_verified_script "IP Check Place" "https://ip.check.place/script/check.sh" "$H_IPCHECK" "-l en" || true; pause_prompt ;;
+      2) run_verified_script "Censorcheck" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" -- --mode geoblock || true; pause_prompt ;;
+      3) run_verified_script "Censorcheck DPI" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" -- --mode dpi || true; pause_prompt ;;
+      4) need_cmd iperf3 iperf3 || true; run_verified_script "iPerf3 RU" "https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh" "$H_IPERF" || true; pause_prompt ;;
+      5) run_verified_script "YABS" "https://yabs.sh" "$H_YABS" -- -4 || true; pause_prompt ;;
+      6) run_verified_script "IP Check Place" "https://ip.check.place/script/check.sh" "$H_IPCHECK" -- -l en || true; pause_prompt ;;
       7) run_verified_script "bench.sh" "https://bench.sh" "$H_BENCH" || true; pause_prompt ;;
-      8) run_verified_script "IPQuality" "https://check.place/script/check.sh" "$H_IPQUALITY" "-l en" || true; pause_prompt ;;
-      9) need_cmd sysbench sysbench; sysbench cpu run; pause_prompt ;;
-      10) need_cmd sysbench sysbench; sysbench memory run; pause_prompt ;;
+      8) run_verified_script "IPQuality" "https://check.place/script/check.sh" "$H_IPQUALITY" -- -l en || true; pause_prompt ;;
+      9) need_cmd sysbench sysbench || true; sysbench cpu run || true; pause_prompt ;;
+      10) need_cmd sysbench sysbench || true; sysbench memory run || true; pause_prompt ;;
       11) echo "Тест скорости: файлы 100MB"; wget -qO /dev/null http://speedtest.tele2.net/100MB.zip || wget -qO /dev/null http://ipv4.download.thinkbroadband.com/100MB.zip || true; pause_prompt ;;
-      12) openssl s_client -connect google.com:443 -tls1_2 </dev/null 2>&1 | grep -q "Protocol" && echo "TLS 1.2 OK"; openssl s_client -connect google.com:443 -tls1_3 </dev/null 2>&1 | grep -q "Protocol" && echo "TLS 1.3 OK"; pause_prompt ;;
-      13) traceroute -n yandex.ru || tracepath yandex.ru; pause_prompt ;;
-      14) ping -c 4 yandex.ru; pause_prompt ;;
+      12) { openssl s_client -connect google.com:443 -tls1_2 </dev/null 2>&1 | grep -q "Protocol" && echo "TLS 1.2 OK"; } || echo "TLS 1.2 недоступен"; { openssl s_client -connect google.com:443 -tls1_3 </dev/null 2>&1 | grep -q "Protocol" && echo "TLS 1.3 OK"; } || echo "TLS 1.3 недоступен"; pause_prompt ;;
+      13) traceroute -n yandex.ru || tracepath yandex.ru || true; pause_prompt ;;
+      14) ping -c 4 yandex.ru || true; pause_prompt ;;
       99)
         run_verified_script "IP Region" "https://ipregion.vrnt.xyz" "$H_IPREG" || true
-        run_verified_script "Censorcheck" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" "--mode geoblock" || true
-        run_verified_script "Censorcheck DPI" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" "--mode dpi" || true
-        need_cmd iperf3 iperf3; run_verified_script "iPerf3 RU" "https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh" "$H_IPERF" || true
-        run_verified_script "YABS" "https://yabs.sh" "$H_YABS" "-4" || true
-        run_verified_script "IP Check Place" "https://ip.check.place/script/check.sh" "$H_IPCHECK" "-l en" || true
+        run_verified_script "Censorcheck" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" -- --mode geoblock || true
+        run_verified_script "Censorcheck DPI" "https://github.com/vernette/censorcheck/raw/master/censorcheck.sh" "$H_CENSOR" -- --mode dpi || true
+        need_cmd iperf3 iperf3 || true; run_verified_script "iPerf3 RU" "https://github.com/itdoginfo/russian-iperf3-servers/raw/main/speedtest.sh" "$H_IPERF" || true
+        run_verified_script "YABS" "https://yabs.sh" "$H_YABS" -- -4 || true
+        run_verified_script "IP Check Place" "https://ip.check.place/script/check.sh" "$H_IPCHECK" -- -l en || true
         run_verified_script "bench.sh" "https://bench.sh" "$H_BENCH" || true
-        run_verified_script "IPQuality" "https://check.place/script/check.sh" "$H_IPQUALITY" "-l en" || true
-        need_cmd sysbench sysbench; sysbench cpu run; sysbench memory run
+        run_verified_script "IPQuality" "https://check.place/script/check.sh" "$H_IPQUALITY" -- -l en || true
+        need_cmd sysbench sysbench || true; sysbench cpu run || true; sysbench memory run || true
         echo "Все тесты завершены"; pause_prompt ;;
       0) return ;;
       *) echo "Неверный выбор"; sleep 1 ;;
@@ -558,7 +573,7 @@ run_multitest() {
 # ======================================================
 main() {
     init_logging
-    mkdir -p "$BACKUP_DIR"
+    mkdir -p "$BACKUP_DIR" 2>/dev/null || true
     check_distro
     trap 'echo -e "\n${YELLOW}Прервано${NC}"; exit 130' INT
     while true; do
@@ -574,7 +589,7 @@ main() {
         echo ""
         echo " 0. Выйти"
         echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
-        read -p "Выбор: " choice
+        read -p "Выбор: " choice || choice=0
         case $choice in
             1) check_root && base_setup || { echo "Нужен root"; pause_prompt; } ;;
             2) check_root && ipv6_menu || { echo "Нужен root"; pause_prompt; } ;;
