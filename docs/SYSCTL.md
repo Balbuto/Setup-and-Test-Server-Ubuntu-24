@@ -170,4 +170,3 @@ sysctl --system
 ```
 
 Или скопируйте бэкап обратно и `sysctl --system`.
-
