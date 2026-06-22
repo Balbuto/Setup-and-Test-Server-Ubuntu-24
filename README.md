@@ -78,9 +78,9 @@
 ## 📦 Установка
 
 ```bash
-wget https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/main/server-setup
-chmod +x server-setup
-sudo ./server-setup
+wget https://raw.githubusercontent.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/main/server-setup.sh
+chmod +x server-setup.sh
+sudo ./server-setup.sh
 ```
 
 Требования: **Ubuntu 24.04 LTS**, root.
