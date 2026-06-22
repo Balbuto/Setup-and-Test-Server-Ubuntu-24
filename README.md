@@ -10,14 +10,12 @@
 
 Выполняет полную настройку сети, установку необходимого ПО, hardening и предоставляет встроенный набор тестов для проверки производительности.
 
-Основано на проекте Balbuto v2.
-
 ---
 
 ## 📦 Установка
 
 ```bash
-wget https://github.com/YOUR_USER/Setup-and-Test-Server-Ubuntu-24/releases/download/v3.2/server-setup.sh
+wget https://github.com/Balbuto/Setup-and-Test-Server-Ubuntu-24/releases/download/v3.2/server-setup.sh
 chmod +x server-setup.sh
 sudo ./server-setup.sh
 ```
@@ -174,5 +172,4 @@ MIT
 
 ## 🙏 Благодарности
 
-- [Balbuto](https://github.com/Balbuto) - автор v1/v2
 - Авторы yabs.sh, bench.sh, censorcheck, ipregion, IP.Check.Place и др.
