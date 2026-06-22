@@ -3,8 +3,8 @@
 ## Быстрый старт
 
 ```bash
-chmod +x server-setup.sh
-sudo ./server-setup.sh
+chmod +x server-setup
+sudo ./server-setup
 ```
 
 Главное меню:
